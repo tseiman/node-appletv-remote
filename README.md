@@ -7,13 +7,13 @@ Pure Node.js library and CLI for remote controlling Apple TV devices over the lo
 
 No native dependencies — uses only Node.js built-in crypto and networking APIs alongside a small set of JavaScript libraries.
 
-I wanted to learn the handshake process of the apple TV and implement in typescript so I created this project since the other node implementations are dperecated and no longer work with latest apple tvs.
+The project implements the Apple TV handshake and remote-control protocols in TypeScript because older Node.js implementations are deprecated and no longer work reliably with current Apple TV releases.
 
 Inspired by [pyatv](https://pyatv.dev/) and the original [node-appletv](https://github.com/evandcoleman/node-appletv).
 
 ## Status
 
-Tested and working against Apple TV 4K — discovery, AirPlay pairing, companion pairing, navigation, media controls, now-playing state, playback queue, artwork, and raw message streaming all confirmed over local network. Artwork availability depends on the app (e.g. YouTube doesn't expose it via MRP).
+Tested and working against Apple TV 4K — discovery, AirPlay pairing, companion pairing, navigation, media controls, now-playing state, playback queue, artwork, and raw message streaming all confirmed over local network. Companion power-state monitoring is covered by automated protocol and API tests and still requires validation against the target tvOS releases. Artwork availability depends on the app (e.g. YouTube doesn't expose it via MRP).
 
 ## CLI Usage
 
@@ -40,6 +40,24 @@ atv companion-pair
 ```
 
 Pairs over the Companion Link protocol. A PIN will appear on your Apple TV screen — enter it when prompted. Companion credentials are merged into `~/.atv-credentials.json` alongside any existing AirPlay credentials.
+
+Keep this file private: Companion credentials authenticate as a paired remote and must not be committed, logged, or shared.
+
+### Show the current power state
+
+```bash
+atv power [deviceId]
+```
+
+Connects over Companion Link, subscribes to system-status events, attempts an initial `FetchAttentionState` query, prints the normalized and raw status, and disconnects. A result of `unknown` means that no authoritative state was available; it must not be treated as standby.
+
+### Monitor power-state changes
+
+```bash
+atv monitor-power [deviceId]
+```
+
+Keeps the Companion connection open and prints every raw system-status transition until Ctrl+C. See [Power-state monitoring](docs/README_POWER_STATE.md) for status mapping, events, and tvOS compatibility notes.
 
 ### Send a command
 
@@ -203,6 +221,33 @@ await atv.sendKeyCommand(Key.Play);
 atv.close();
 ```
 
+### Observe power state
+
+Power-state observation uses Companion credentials, not AirPlay credentials:
+
+```typescript
+import {
+  AppleTV,
+  CompanionSystemStatus,
+  PowerState,
+  type PowerStateChangedEvent,
+} from 'node-appletv-remote';
+
+const atv = new AppleTV(device);
+await atv.connectCompanion(credentials.companionCredentials);
+
+console.log(atv.powerState);  // PowerState.On, Off, or Unknown
+console.log(atv.systemStatus); // Awake, Asleep, Screensaver, Idle, or Unknown
+
+atv.on('powerStateChanged', (event: PowerStateChangedEvent) => {
+  if (event.current === PowerState.Off) {
+    console.log('Apple TV entered standby');
+  }
+});
+```
+
+`Unknown` represents missing, unsupported, or disconnected state information. It deliberately does not mean `Off`.
+
 ### Events
 
 ```typescript
@@ -229,13 +274,24 @@ atv.on('playbackQueue', (queue) => {
 atv.on('message', (msg: Message) => {
   console.log(msg.toString());
 });
+
+// Normalized Companion power changes
+atv.on('powerStateChanged', ({ previous, current, systemStatus }) => {
+  console.log(previous, '->', current, systemStatus);
+});
+
+// Every raw Companion system-status transition
+atv.on('systemStatusChanged', ({ previous, current, powerState }) => {
+  console.log(previous, '->', current, powerState);
+});
 ```
 
 ## Architecture
 
 | Layer | Description |
 |-------|-------------|
-| **AppleTV API** | `scan()` · `connect()` · navigation · media · `getState()` · `requestPlaybackQueue()` · `requestArtwork()` |
+| **AppleTV API** | `scan()` · `connect()` · `connectCompanion()` · navigation · media · power state · `getState()` · playback queue · artwork |
+| **Companion API** | OPACK request/event envelopes · remote-session lifecycle · system-status subscription |
 | **AirPlayConnection** | RTSP session · Event channel · Data channel · Heartbeat |
 | **HAP Auth** | SRP pair-setup · X25519 pair-verify · Ed25519 signatures · Companion pair-setup |
 | **MRP Protocol** | Protobuf messages · HID events · Media commands |
@@ -284,7 +340,7 @@ npm install
 # Build
 npm run build
 
-# Run tests (68 tests)
+# Run tests
 npm test
 
 # Run tests in watch mode

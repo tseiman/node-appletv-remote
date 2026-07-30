@@ -17,6 +17,7 @@
   "files": [
     "dist",
     "!dist/**/__tests__",
+    "docs",
     "LICENSE",
     "README.md"
   ],
@@ -31,12 +32,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/energee/node-appletv-remote.git"
+    "url": "git+https://github.com/tseiman/node-appletv-remote.git"
   },
   "bugs": {
-    "url": "https://github.com/energee/node-appletv-remote/issues"
+    "url": "https://github.com/tseiman/node-appletv-remote/issues"
   },
-  "homepage": "https://github.com/energee/node-appletv-remote#readme",
+  "homepage": "https://github.com/tseiman/node-appletv-remote#readme",
   "license": "MIT",
   "dependencies": {
     "@noble/ciphers": "^1.3.0",
