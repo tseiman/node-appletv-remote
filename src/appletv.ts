@@ -207,14 +207,22 @@ export class AppleTV extends EventEmitter {
     if (!this.companionApi) return;
 
     this.updateSystemStatus(CompanionSystemStatus.Unknown);
-    this.companionApi.subscribeEvent('SystemStatus');
-    this.companionApi.subscribeEvent('TVSystemStatus');
     try {
       const status = await this.companionApi.fetchAttentionState();
       this.updateSystemStatus(status);
     } catch {
       // FetchAttentionState is not implemented by every tvOS version. Pushed
       // SystemStatus events remain authoritative when the initial query fails.
+    }
+
+    for (const event of ['SystemStatus', 'TVSystemStatus']) {
+      try {
+        this.companionApi.subscribeEvent(event);
+      } catch (error) {
+        // A failed subscription may prevent live updates but must not tear down
+        // an otherwise valid Companion connection.
+        this.emit('companionError', error);
+      }
     }
   }
 

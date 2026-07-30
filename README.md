@@ -49,7 +49,7 @@ Keep this file private: Companion credentials authenticate as a paired remote an
 atv power [deviceId]
 ```
 
-Connects over Companion Link, subscribes to system-status events, attempts an initial `FetchAttentionState` query, prints the normalized and raw status, and disconnects. A result of `unknown` means that no authoritative state was available; it must not be treated as standby.
+Connects over Companion Link, attempts an initial `FetchAttentionState` query, subscribes to system-status events even if that query is unsupported, prints the normalized and raw status, and disconnects. A result of `unknown` means that no authoritative state was available; it must not be treated as standby.
 
 ### Monitor power-state changes
 

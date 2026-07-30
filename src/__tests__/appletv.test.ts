@@ -168,6 +168,9 @@ describe('AppleTV', () => {
       { identifier: '_interest', events: ['SystemStatus'] },
       { identifier: '_interest', events: ['TVSystemStatus'] },
     ]);
+    const fetchCallOrder = vi.mocked(CompanionConnection.prototype.sendRequest)
+      .mock.invocationCallOrder[3];
+    expect(Math.min(...sendMessage.mock.invocationCallOrder)).toBeGreaterThan(fetchCallOrder);
     expect(changes).toEqual([{
       previous: PowerState.Unknown,
       current: PowerState.On,
