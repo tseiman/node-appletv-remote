@@ -127,6 +127,31 @@ describe('AppleTV', () => {
     expect(sendRequest.mock.calls.at(-1)?.[0]).toBe('_sessionStop');
   });
 
+  it('cleans up a Companion connection when remote-session setup fails', async () => {
+    vi.spyOn(CompanionConnection.prototype, 'connect').mockResolvedValue();
+    vi.spyOn(CompanionConnection.prototype, 'sendRequest').mockResolvedValue(new Map());
+    const close = vi.spyOn(CompanionConnection.prototype, 'close').mockImplementation(() => {});
+    const atv = new AppleTV({
+      name: 'Living Room',
+      address: '192.168.1.100',
+      port: 7000,
+      companionPort: 49152,
+      deviceId: 'AA:BB:CC:DD:EE:FF',
+      model: 'AppleTV6,2',
+    });
+
+    await expect(atv.connectCompanion({
+      clientId: 'companion-client',
+      clientLTSK: Buffer.alloc(32, 1),
+      clientLTPK: Buffer.alloc(32, 2),
+      serverLTPK: Buffer.alloc(32, 3),
+      serverId: 'server',
+    })).rejects.toThrow('Companion session response is missing _c');
+
+    expect(close).toHaveBeenCalledOnce();
+    expect(() => atv.sendCompanionMessage('test', new Map())).toThrow('Companion not connected');
+  });
+
   it('fetches and exposes the initial Companion power state', async () => {
     vi.spyOn(CompanionConnection.prototype, 'connect').mockResolvedValue();
     const sendMessage = vi.spyOn(CompanionConnection.prototype, 'sendMessage')

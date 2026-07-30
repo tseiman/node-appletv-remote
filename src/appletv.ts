@@ -175,16 +175,24 @@ export class AppleTV extends EventEmitter {
       this.emit('companionEvent', event);
     });
 
-    await this.companionConnection.connect();
-    this.companionApi = new CompanionAPI(this.companionConnection);
-    await this.companionApi.initializeRemoteSession({
-      clientId: credentials.clientId,
-      deviceId: credentials.clientId,
-      model: 'Node.js',
-      name: 'node-appletv-remote',
-    });
-    await this.initializePowerState();
-    this.emit('companionConnect');
+    try {
+      await this.companionConnection.connect();
+      this.companionApi = new CompanionAPI(this.companionConnection);
+      await this.companionApi.initializeRemoteSession({
+        clientId: credentials.clientId,
+        deviceId: credentials.clientId,
+        model: 'Node.js',
+        name: 'node-appletv-remote',
+      });
+      await this.initializePowerState();
+      this.emit('companionConnect');
+    } catch (error) {
+      this.companionConnection.close();
+      this.companionConnection = undefined;
+      this.companionApi = undefined;
+      this.updateSystemStatus(CompanionSystemStatus.Unknown);
+      throw error;
+    }
   }
 
   /** Send a companion request and wait for response */
