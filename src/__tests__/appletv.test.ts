@@ -1,5 +1,10 @@
-import { describe, it, expect, vi } from 'vitest';
-import { AppleTV, Key } from '../appletv.js';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import {
+  AppleTV,
+  Key,
+  type PowerStateChangedEvent,
+  type SystemStatusChangedEvent,
+} from '../appletv.js';
 import { Credentials } from '../credentials.js';
 import { NowPlayingInfo } from '../now-playing-info.js';
 import { SupportedCommand } from '../supported-command.js';
@@ -7,6 +12,11 @@ import { Message } from '../message.js';
 import { MessageType } from '../mrp/messages.js';
 import { CompanionConnection } from '../companion/connection.js';
 import type { OpackDict } from '../companion/opack.js';
+import { CompanionSystemStatus, PowerState } from '../power-state.js';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('AppleTV', () => {
   it('creates from discovered device info', () => {
@@ -80,6 +90,7 @@ describe('AppleTV', () => {
 
   it('initializes a remote session after Companion pair verification', async () => {
     const connect = vi.spyOn(CompanionConnection.prototype, 'connect').mockResolvedValue();
+    vi.spyOn(CompanionConnection.prototype, 'sendMessage').mockImplementation(() => {});
     const sendRequest = vi.spyOn(CompanionConnection.prototype, 'sendRequest')
       .mockImplementation(async (identifier): Promise<OpackDict> => {
         if (identifier === '_sessionStart') {
@@ -110,9 +121,141 @@ describe('AppleTV', () => {
       '_systemInfo',
       '_sessionStart',
       'TVRCSessionStart',
+      'FetchAttentionState',
     ]);
     await atv.close();
     expect(sendRequest.mock.calls.at(-1)?.[0]).toBe('_sessionStop');
+  });
+
+  it('fetches and exposes the initial Companion power state', async () => {
+    vi.spyOn(CompanionConnection.prototype, 'connect').mockResolvedValue();
+    const sendMessage = vi.spyOn(CompanionConnection.prototype, 'sendMessage')
+      .mockImplementation(() => {});
+    vi.spyOn(CompanionConnection.prototype, 'sendRequest')
+      .mockImplementation(async (identifier): Promise<OpackDict> => {
+        if (identifier === '_sessionStart') {
+          return new Map([['_c', new Map([['_sid', 7]])]]);
+        }
+        if (identifier === 'FetchAttentionState') {
+          return new Map([['_c', new Map([['state', CompanionSystemStatus.Awake]])]]);
+        }
+        return new Map();
+      });
+    const atv = new AppleTV({
+      name: 'Living Room',
+      address: '192.168.1.100',
+      port: 7000,
+      companionPort: 49152,
+      deviceId: 'AA:BB:CC:DD:EE:FF',
+      model: 'AppleTV6,2',
+    });
+    const changes: unknown[] = [];
+    atv.on('powerStateChanged', (event) => changes.push(event));
+
+    await atv.connectCompanion({
+      clientId: 'companion-client',
+      clientLTSK: Buffer.alloc(32, 1),
+      clientLTPK: Buffer.alloc(32, 2),
+      serverLTPK: Buffer.alloc(32, 3),
+      serverId: 'server',
+    });
+
+    expect(atv.powerState).toBe(PowerState.On);
+    expect(sendMessage.mock.calls.map(([identifier, message]) => ({
+      identifier,
+      events: (message.get('_c') as OpackDict).get('_regEvents'),
+    }))).toEqual([
+      { identifier: '_interest', events: ['SystemStatus'] },
+      { identifier: '_interest', events: ['TVSystemStatus'] },
+    ]);
+    expect(changes).toEqual([{
+      previous: PowerState.Unknown,
+      current: PowerState.On,
+      systemStatus: CompanionSystemStatus.Awake,
+    }]);
+    await atv.close();
+    expect(atv.powerState).toBe(PowerState.Unknown);
+    expect(changes).toHaveLength(2);
+    expect(changes[1]).toEqual({
+      previous: PowerState.On,
+      current: PowerState.Unknown,
+      systemStatus: CompanionSystemStatus.Unknown,
+    });
+  });
+
+  it('updates power state from Companion status events without duplicate changes', () => {
+    const atv = new AppleTV({
+      name: 'Living Room',
+      address: '192.168.1.100',
+      port: 7000,
+      deviceId: 'AA:BB:CC:DD:EE:FF',
+      model: 'AppleTV6,2',
+    });
+    const powerChanges: PowerStateChangedEvent[] = [];
+    const systemChanges: SystemStatusChangedEvent[] = [];
+    atv.on('powerStateChanged', (event) => powerChanges.push(event));
+    atv.on('systemStatusChanged', (event) => systemChanges.push(event));
+    const asleepEvent = {
+      identifier: 'TVSystemStatus',
+      data: new Map([['_c', new Map([['state', CompanionSystemStatus.Asleep]])]]),
+    };
+
+    (atv as any).handleCompanionEvent(asleepEvent);
+    (atv as any).handleCompanionEvent(asleepEvent);
+
+    expect(atv.powerState).toBe(PowerState.Off);
+    expect(atv.systemStatus).toBe(CompanionSystemStatus.Asleep);
+    expect(powerChanges).toEqual([{
+      previous: PowerState.Unknown,
+      current: PowerState.Off,
+      systemStatus: CompanionSystemStatus.Asleep,
+    }]);
+    expect(systemChanges).toHaveLength(1);
+  });
+
+  it('reports raw active-state transitions without duplicate power changes', () => {
+    const atv = new AppleTV({
+      name: 'Living Room',
+      address: '192.168.1.100',
+      port: 7000,
+      deviceId: 'AA:BB:CC:DD:EE:FF',
+      model: 'AppleTV6,2',
+    });
+    const powerChanges: PowerStateChangedEvent[] = [];
+    const systemChanges: SystemStatusChangedEvent[] = [];
+    atv.on('powerStateChanged', (event) => powerChanges.push(event));
+    atv.on('systemStatusChanged', (event) => systemChanges.push(event));
+
+    for (const state of [CompanionSystemStatus.Awake, CompanionSystemStatus.Idle]) {
+      (atv as any).handleCompanionEvent({
+        identifier: 'SystemStatus',
+        data: new Map([['_c', new Map([['state', state]])]]),
+      });
+    }
+
+    expect(powerChanges).toHaveLength(1);
+    expect(systemChanges).toHaveLength(2);
+    expect(atv.powerState).toBe(PowerState.On);
+    expect(atv.systemStatus).toBe(CompanionSystemStatus.Idle);
+  });
+
+  it('ignores malformed and unrelated Companion events', () => {
+    const atv = new AppleTV({
+      name: 'Living Room',
+      address: '192.168.1.100',
+      port: 7000,
+      deviceId: 'AA:BB:CC:DD:EE:FF',
+      model: 'AppleTV6,2',
+    });
+
+    (atv as any).handleCompanionEvent({ identifier: 'Other', data: new Map() });
+    (atv as any).handleCompanionEvent({
+      identifier: 'SystemStatus',
+      data: new Map([['_c', new Map([['state', 'asleep']])]]),
+    });
+
+    expect(atv.powerState).toBe(PowerState.Unknown);
+    expect(atv.systemStatus).toBe(CompanionSystemStatus.Unknown);
   });
 
   it('handleMRPMessage emits nowPlaying for SetState with nowPlayingInfo', () => {

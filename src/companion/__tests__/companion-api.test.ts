@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CompanionAPI, CompanionMessageType } from '../api.js';
+import { CompanionSystemStatus } from '../../power-state.js';
 import type { OpackDict } from '../opack.js';
 
 class RecordingTransport {
@@ -123,5 +124,16 @@ describe('CompanionAPI', () => {
     const content = transport.requests[0].message.get('_c') as OpackDict;
     expect(content.get('_srvT')).toBe('com.apple.tvremoteservices');
     expect(content.get('_sid')).toBe(0x0000000700000008n);
+  });
+
+  it('fetches the current Companion attention state', async () => {
+    const transport = new RecordingTransport();
+    transport.responses.set(
+      'FetchAttentionState',
+      new Map([['_c', new Map([['state', CompanionSystemStatus.Asleep]])]]),
+    );
+    const api = new CompanionAPI(transport);
+
+    await expect(api.fetchAttentionState()).resolves.toBe(CompanionSystemStatus.Asleep);
   });
 });

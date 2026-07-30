@@ -7,6 +7,12 @@ import { MRPMessage, HID_KEY_MAP, MessageType } from './mrp/messages.js';
 import { NowPlayingInfo } from './now-playing-info.js';
 import { SupportedCommand } from './supported-command.js';
 import { Message } from './message.js';
+import {
+  CompanionSystemStatus,
+  PowerState,
+  companionSystemStatusFromValue,
+  powerStateFromSystemStatus,
+} from './power-state.js';
 import { CompanionConnection } from './companion/connection.js';
 import { CompanionAPI } from './companion/api.js';
 import { CompanionPairSetup } from './companion/pair-setup.js';
@@ -63,6 +69,18 @@ export interface CompanionEvent {
   data: OpackDict;
 }
 
+export interface PowerStateChangedEvent {
+  previous: PowerState;
+  current: PowerState;
+  systemStatus: CompanionSystemStatus;
+}
+
+export interface SystemStatusChangedEvent {
+  previous: CompanionSystemStatus;
+  current: CompanionSystemStatus;
+  powerState: PowerState;
+}
+
 export class AppleTV extends EventEmitter {
   readonly name: string;
   readonly address: string;
@@ -73,6 +91,16 @@ export class AppleTV extends EventEmitter {
   private connection?: AirPlayConnection;
   private companionConnection?: CompanionConnection;
   private companionApi?: CompanionAPI;
+  private currentPowerState = PowerState.Unknown;
+  private currentSystemStatus = CompanionSystemStatus.Unknown;
+
+  get powerState(): PowerState {
+    return this.currentPowerState;
+  }
+
+  get systemStatus(): CompanionSystemStatus {
+    return this.currentSystemStatus;
+  }
 
   constructor(info: DiscoveredDeviceInfo) {
     super();
@@ -115,6 +143,7 @@ export class AppleTV extends EventEmitter {
     this.companionConnection?.close();
     this.companionConnection = undefined;
     this.companionApi = undefined;
+    this.updateSystemStatus(CompanionSystemStatus.Unknown);
     this.connection?.close();
     this.connection = undefined;
   }
@@ -136,9 +165,13 @@ export class AppleTV extends EventEmitter {
     if (!port) throw new Error('No companion port available');
 
     this.companionConnection = new CompanionConnection(this.address, port, credentials);
-    this.companionConnection.on('close', () => this.emit('companionClose'));
+    this.companionConnection.on('close', () => {
+      this.updateSystemStatus(CompanionSystemStatus.Unknown);
+      this.emit('companionClose');
+    });
     this.companionConnection.on('error', (err) => this.emit('companionError', err));
     this.companionConnection.on('event', (event: CompanionEvent) => {
+      this.handleCompanionEvent(event);
       this.emit('companionEvent', event);
     });
 
@@ -150,6 +183,7 @@ export class AppleTV extends EventEmitter {
       model: 'Node.js',
       name: 'node-appletv-remote',
     });
+    await this.initializePowerState();
     this.emit('companionConnect');
   }
 
@@ -167,6 +201,57 @@ export class AppleTV extends EventEmitter {
   sendCompanionMessage(identifier: string, content: OpackDict): void {
     if (!this.companionConnection) throw new Error('Companion not connected');
     this.companionConnection.sendMessage(identifier, content);
+  }
+
+  private async initializePowerState(): Promise<void> {
+    if (!this.companionApi) return;
+
+    this.updateSystemStatus(CompanionSystemStatus.Unknown);
+    this.companionApi.subscribeEvent('SystemStatus');
+    this.companionApi.subscribeEvent('TVSystemStatus');
+    try {
+      const status = await this.companionApi.fetchAttentionState();
+      this.updateSystemStatus(status);
+    } catch {
+      // FetchAttentionState is not implemented by every tvOS version. Pushed
+      // SystemStatus events remain authoritative when the initial query fails.
+    }
+  }
+
+  private handleCompanionEvent(event: CompanionEvent): void {
+    if (event.identifier !== 'SystemStatus' && event.identifier !== 'TVSystemStatus') return;
+
+    const content = event.data.get('_c');
+    if (!(content instanceof Map)) return;
+    const state = content.get('state');
+    if (typeof state !== 'number' || !Number.isInteger(state)) return;
+    this.updateSystemStatus(companionSystemStatusFromValue(state));
+  }
+
+  private updateSystemStatus(status: CompanionSystemStatus): void {
+    const previousSystemStatus = this.currentSystemStatus;
+    const previousPowerState = this.currentPowerState;
+    const nextPowerState = powerStateFromSystemStatus(status);
+
+    this.currentSystemStatus = status;
+    this.currentPowerState = nextPowerState;
+
+    if (previousSystemStatus !== status) {
+      const event: SystemStatusChangedEvent = {
+        previous: previousSystemStatus,
+        current: status,
+        powerState: nextPowerState,
+      };
+      this.emit('systemStatusChanged', event);
+    }
+    if (previousPowerState !== nextPowerState) {
+      const event: PowerStateChangedEvent = {
+        previous: previousPowerState,
+        current: nextPowerState,
+        systemStatus: status,
+      };
+      this.emit('powerStateChanged', event);
+    }
   }
 
   // --- Remote control commands ---

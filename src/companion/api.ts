@@ -1,4 +1,8 @@
 import { randomInt } from 'node:crypto';
+import {
+  CompanionSystemStatus,
+  companionSystemStatusFromValue,
+} from '../power-state.js';
 import type { OpackDict } from './opack.js';
 
 const REMOTE_SERVICE = 'com.apple.tvremoteservices';
@@ -91,6 +95,19 @@ export class CompanionAPI {
 
     this.sessionId = (BigInt(remoteSessionId) << 32n) | BigInt(localSessionId);
     return this.sessionId;
+  }
+
+  async fetchAttentionState(): Promise<CompanionSystemStatus> {
+    const response = await this.sendCommand('FetchAttentionState');
+    const content = response.get('_c');
+    if (!(content instanceof Map)) {
+      throw new Error('FetchAttentionState response is missing _c');
+    }
+    const state = content.get('state');
+    if (typeof state !== 'number' || !Number.isInteger(state)) {
+      throw new Error('FetchAttentionState response is missing state');
+    }
+    return companionSystemStatusFromValue(state);
   }
 
   async stopRemoteSession(): Promise<void> {

@@ -1,6 +1,18 @@
 export { scan } from './discovery.js';
 export { AppleTV, Key, TextInputActionType } from './appletv.js';
-export type { KeyboardInfo, TextInputEvent, CompanionEvent } from './appletv.js';
+export type {
+  KeyboardInfo,
+  TextInputEvent,
+  CompanionEvent,
+  PowerStateChangedEvent,
+  SystemStatusChangedEvent,
+} from './appletv.js';
+export {
+  CompanionSystemStatus,
+  PowerState,
+  companionSystemStatusFromValue,
+  powerStateFromSystemStatus,
+} from './power-state.js';
 export { CompanionConnection } from './companion/connection.js';
 export { CompanionAPI, CompanionMessageType } from './companion/api.js';
 export type { CompanionTransport, RemoteSessionOptions } from './companion/api.js';
