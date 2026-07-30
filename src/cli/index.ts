@@ -6,7 +6,13 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { Message } from '../message.js';
-import type { KeyboardInfo, TextInputEvent, CompanionEvent } from '../appletv.js';
+import type {
+  KeyboardInfo,
+  TextInputEvent,
+  CompanionEvent,
+  SystemStatusChangedEvent,
+} from '../appletv.js';
+import { formatPowerStatus } from './power.js';
 
 const CREDS_FILE = join(process.env.HOME ?? '.', '.atv-credentials.json');
 
@@ -111,6 +117,23 @@ async function connectToDevice(deviceId?: string): Promise<AppleTV> {
   console.log(`Connecting to ${device.name} (${device.address}:${device.port})...`);
   const atv = new AppleTV(device);
   await atv.connect(credentials);
+  return atv;
+}
+
+async function connectToCompanionDevice(deviceId?: string): Promise<AppleTV> {
+  const { id, credentials } = loadCredentials(deviceId);
+  if (!credentials.companionCredentials) {
+    throw new Error('No companion credentials. Run "atv companion-pair" first.');
+  }
+
+  const device = await findDevice(id);
+  if (!device.companionPort) {
+    throw new Error('Device has no companion-link port');
+  }
+
+  console.log(`Connecting companion to ${device.name} (${device.address}:${device.companionPort})...`);
+  const atv = new AppleTV(device);
+  await atv.connectCompanion(credentials.companionCredentials);
   return atv;
 }
 
@@ -335,19 +358,7 @@ async function cmdCompanionPair() {
 }
 
 async function cmdCompanionTest(deviceId?: string) {
-  const { id, credentials } = loadCredentials(deviceId);
-  if (!credentials.companionCredentials) {
-    throw new Error('No companion credentials. Run "atv companion-pair" first.');
-  }
-
-  const device = await findDevice(id);
-  if (!device.companionPort) {
-    throw new Error('Device has no companion-link port');
-  }
-
-  const atv = new AppleTV(device);
-  console.log(`Connecting companion to ${device.name} (${device.address}:${device.companionPort})...`);
-  await atv.connectCompanion(credentials.companionCredentials);
+  const atv = await connectToCompanionDevice(deviceId);
   console.log('Companion connected! Listening for events (Ctrl+C to stop)...\n');
 
   atv.on('companionEvent', (event: CompanionEvent) => {
@@ -364,6 +375,38 @@ async function cmdCompanionTest(deviceId?: string) {
 
   atv.on('companionClose', () => {
     console.log('Companion connection closed.');
+  });
+
+  process.on('SIGINT', async () => {
+    console.log('\nDisconnecting...');
+    await atv.close();
+    process.exit(0);
+  });
+}
+
+async function cmdPower(deviceId?: string) {
+  const atv = await connectToCompanionDevice(deviceId);
+  try {
+    for (const line of formatPowerStatus(atv.powerState, atv.systemStatus)) {
+      console.log(line);
+    }
+  } finally {
+    await atv.close();
+  }
+}
+
+async function cmdMonitorPower(deviceId?: string) {
+  const atv = await connectToCompanionDevice(deviceId);
+  const printStatus = () => {
+    const status = formatPowerStatus(atv.powerState, atv.systemStatus).join(' | ');
+    console.log(`${new Date().toISOString()} | ${status}`);
+  };
+
+  printStatus();
+  console.log('Monitoring power state (Ctrl+C to stop)...');
+  atv.on('systemStatusChanged', (_event: SystemStatusChangedEvent) => printStatus());
+  atv.on('companionError', (error: Error) => {
+    console.error(`Companion error: ${error.message}`);
   });
 
   process.on('SIGINT', async () => {
@@ -444,6 +487,12 @@ switch (cmd) {
   case 'companion-test':
     cmdCompanionTest(args[0]).catch(console.error);
     break;
+  case 'power':
+    cmdPower(args[0]).catch(console.error);
+    break;
+  case 'monitor-power':
+    cmdMonitorPower(args[0]).catch(console.error);
+    break;
   default:
     console.log('Usage:');
     console.log('  atv scan                           Scan for Apple TVs');
@@ -457,6 +506,8 @@ switch (cmd) {
     console.log('  atv keyboard [device]              Stream keyboard/text events');
     console.log('  atv companion-pair                 Pair with companion protocol');
     console.log('  atv companion-test [device]        Test companion connection');
+    console.log('  atv power [device]                 Show current power state');
+    console.log('  atv monitor-power [device]         Monitor power-state changes');
     console.log('');
     console.log('Commands: up, down, left, right, select, menu, home, home_hold,');
     console.log('          top_menu, play, pause, play_pause, next, previous,');
