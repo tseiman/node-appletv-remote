@@ -13,7 +13,7 @@ The implementation observes Apple TV system status. It does not infer standby fr
 3. Store the returned Companion credentials outside the source tree.
 4. Connect with `AppleTV.connectCompanion()`.
 
-Companion credentials authenticate a trusted remote. Never commit, log, or share them.
+Companion credentials authenticate a trusted remote. Never commit, log, or share them. The CLI creates and updates `~/.atv-credentials.json` with owner-only mode `0600`; applications embedding the library must protect their own credential store equivalently.
 
 ## Protocol flow
 
@@ -22,8 +22,8 @@ Companion credentials authenticate a trusted remote. Never commit, log, or share
 1. Send `_systemInfo` with a stable paired-client identity.
 2. Open `com.apple.tvremoteservices` with `_sessionStart`.
 3. Attempt `TVRCSessionStart` using protocol version `1.2`.
-4. Attempt an initial `FetchAttentionState` request.
-5. Subscribe to `SystemStatus` and `TVSystemStatus` through `_interest` events, regardless of whether the initial query succeeded.
+4. Subscribe to `SystemStatus` and `TVSystemStatus` through `_interest` events.
+5. Attempt an initial `FetchAttentionState` request. If a subscribed event arrives while the snapshot is in flight, the event is retained and the potentially stale snapshot is discarded.
 
 `TVRCSessionStart` and `FetchAttentionState` are not implemented consistently across tvOS releases. Failure of either request is therefore non-fatal. Pushed status events remain authoritative.
 

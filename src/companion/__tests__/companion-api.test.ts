@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CompanionAPI, CompanionMessageType } from '../api.js';
 import { CompanionSystemStatus } from '../../power-state.js';
 import type { OpackDict } from '../opack.js';
+import { opackEncode } from '../opack.js';
 
 class RecordingTransport {
   readonly requests: Array<{ identifier: string; message: OpackDict }> = [];
@@ -105,7 +106,7 @@ describe('CompanionAPI', () => {
     const transport = new RecordingTransport();
     transport.responses.set(
       '_sessionStart',
-      new Map([['_c', new Map([['_sid', 7]])]]),
+      new Map([['_c', new Map([['_sid', 0x89abcdef]])]]),
     );
     const api = new CompanionAPI(transport);
     await api.initializeRemoteSession({
@@ -123,7 +124,8 @@ describe('CompanionAPI', () => {
     expect(transport.requests[0].identifier).toBe('_sessionStop');
     const content = transport.requests[0].message.get('_c') as OpackDict;
     expect(content.get('_srvT')).toBe('com.apple.tvremoteservices');
-    expect(content.get('_sid')).toBe(0x0000000700000008n);
+    expect(content.get('_sid')).toBe(0x89abcdef00000008n);
+    expect(() => opackEncode(transport.requests[0].message)).not.toThrow();
   });
 
   it('fetches the current Companion attention state', async () => {

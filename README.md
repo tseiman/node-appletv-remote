@@ -39,7 +39,7 @@ Walks through the AirPlay pairing flow — a PIN will appear on your Apple TV sc
 atv companion-pair
 ```
 
-Pairs over the Companion Link protocol. A PIN will appear on your Apple TV screen — enter it when prompted. Companion credentials are merged into `~/.atv-credentials.json` alongside any existing AirPlay credentials.
+Pairs over the Companion Link protocol. A PIN will appear on your Apple TV screen — enter it when prompted. Companion credentials are merged into `~/.atv-credentials.json` alongside any existing AirPlay credentials. The CLI enforces owner-only file permissions (`0600`) whenever it writes this credential store.
 
 Keep this file private: Companion credentials authenticate as a paired remote and must not be committed, logged, or shared.
 
@@ -49,7 +49,7 @@ Keep this file private: Companion credentials authenticate as a paired remote an
 atv power [deviceId]
 ```
 
-Connects over Companion Link, attempts an initial `FetchAttentionState` query, subscribes to system-status events even if that query is unsupported, prints the normalized and raw status, and disconnects. A result of `unknown` means that no authoritative state was available; it must not be treated as standby.
+Connects over Companion Link, subscribes to system-status events, then attempts an initial `FetchAttentionState` query. If a pushed event arrives while the query is in flight, the event wins so that a stale snapshot cannot overwrite it. The command prints the normalized and raw status and disconnects. A result of `unknown` means that no authoritative state was available; it must not be treated as standby.
 
 ### Monitor power-state changes
 

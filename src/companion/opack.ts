@@ -147,17 +147,20 @@ function encodeInteger(value: number, parts: Buffer[]): void {
     return;
   }
 
-  // Fall through to int64
-  const buf = Buffer.alloc(9);
-  buf[0] = TAG_INT64;
-  buf.writeBigInt64LE(BigInt(value), 1);
-  parts.push(buf);
+  // Fall through to uint64. OPACK integer tags are decoded as unsigned.
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError('OPACK integers must be non-negative safe integers or bigint values');
+  }
+  encodeBigInt(BigInt(value), parts);
 }
 
 function encodeBigInt(value: bigint, parts: Buffer[]): void {
+  if (value < 0n || value > 0xffffffffffffffffn) {
+    throw new RangeError('OPACK bigint is outside the uint64 range');
+  }
   const buf = Buffer.alloc(9);
   buf[0] = TAG_INT64;
-  buf.writeBigInt64LE(value, 1);
+  buf.writeBigUInt64LE(value, 1);
   parts.push(buf);
 }
 

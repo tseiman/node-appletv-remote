@@ -93,6 +93,7 @@ export class AppleTV extends EventEmitter {
   private companionApi?: CompanionAPI;
   private currentPowerState = PowerState.Unknown;
   private currentSystemStatus = CompanionSystemStatus.Unknown;
+  private statusEventGeneration = 0;
 
   get powerState(): PowerState {
     return this.currentPowerState;
@@ -215,13 +216,7 @@ export class AppleTV extends EventEmitter {
     if (!this.companionApi) return;
 
     this.updateSystemStatus(CompanionSystemStatus.Unknown);
-    try {
-      const status = await this.companionApi.fetchAttentionState();
-      this.updateSystemStatus(status);
-    } catch {
-      // FetchAttentionState is not implemented by every tvOS version. Pushed
-      // SystemStatus events remain authoritative when the initial query fails.
-    }
+    const generationBeforeInitialization = this.statusEventGeneration;
 
     for (const event of ['SystemStatus', 'TVSystemStatus']) {
       try {
@@ -232,6 +227,16 @@ export class AppleTV extends EventEmitter {
         this.emit('companionError', error);
       }
     }
+
+    try {
+      const status = await this.companionApi.fetchAttentionState();
+      if (this.statusEventGeneration === generationBeforeInitialization) {
+        this.updateSystemStatus(status);
+      }
+    } catch {
+      // FetchAttentionState is not implemented by every tvOS version. Pushed
+      // SystemStatus events remain authoritative when the initial query fails.
+    }
   }
 
   private handleCompanionEvent(event: CompanionEvent): void {
@@ -241,6 +246,7 @@ export class AppleTV extends EventEmitter {
     if (!(content instanceof Map)) return;
     const state = content.get('state');
     if (typeof state !== 'number' || !Number.isInteger(state)) return;
+    this.statusEventGeneration += 1;
     this.updateSystemStatus(companionSystemStatusFromValue(state));
   }
 

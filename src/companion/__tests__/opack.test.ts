@@ -64,6 +64,14 @@ describe('OPACK', () => {
       expect(buf[0]).toBe(0x33); // TAG_INT64
       expect(opackDecode(buf)).toBe(big);
     });
+
+    it('encodes unsigned int64 values used by combined Companion session ids', () => {
+      const upperHalfSessionId = 0x89abcdef12345678n;
+      const maxUInt64 = 0xffffffffffffffffn;
+
+      expect(opackDecode(opackEncode(upperHalfSessionId))).toBe(upperHalfSessionId);
+      expect(opackDecode(opackEncode(maxUInt64))).toBe(maxUInt64);
+    });
   });
 
   describe('floats', () => {

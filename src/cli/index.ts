@@ -13,6 +13,7 @@ import type {
   SystemStatusChangedEvent,
 } from '../appletv.js';
 import { formatPowerStatus } from './power.js';
+import { writeCredentialsFile } from './credentials-file.js';
 
 const CREDS_FILE = join(process.env.HOME ?? '.', '.atv-credentials.json');
 
@@ -70,7 +71,7 @@ async function cmdPair() {
     stored = JSON.parse(readFileSync(CREDS_FILE, 'utf-8'));
   }
   stored[device.deviceId] = creds.serialize();
-  writeFileSync(CREDS_FILE, JSON.stringify(stored, null, 2));
+  writeCredentialsFile(CREDS_FILE, stored);
   console.log(`Paired! Credentials saved to ${CREDS_FILE}`);
 }
 
@@ -353,7 +354,7 @@ async function cmdCompanionPair() {
     stored[device.deviceId] = creds.serialize();
   }
 
-  writeFileSync(CREDS_FILE, JSON.stringify(stored, null, 2));
+  writeCredentialsFile(CREDS_FILE, stored);
   console.log(`Companion paired! Credentials saved to ${CREDS_FILE}`);
 }
 
@@ -409,11 +410,16 @@ async function cmdMonitorPower(deviceId?: string) {
     console.error(`Companion error: ${error.message}`);
   });
 
-  process.on('SIGINT', async () => {
-    console.log('\nDisconnecting...');
-    await atv.close();
-    process.exit(0);
-  });
+  let shutdownPromise: Promise<void> | undefined;
+  const shutdown = () => {
+    shutdownPromise ??= (async () => {
+      console.log('\nDisconnecting...');
+      await atv.close();
+      process.exit(0);
+    })();
+  };
+  process.once('SIGINT', shutdown);
+  process.once('SIGTERM', shutdown);
 }
 
 async function cmdKeyboard(deviceId?: string) {

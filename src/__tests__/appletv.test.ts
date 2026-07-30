@@ -195,7 +195,7 @@ describe('AppleTV', () => {
     ]);
     const fetchCallOrder = vi.mocked(CompanionConnection.prototype.sendRequest)
       .mock.invocationCallOrder[3];
-    expect(Math.min(...sendMessage.mock.invocationCallOrder)).toBeGreaterThan(fetchCallOrder);
+    expect(Math.max(...sendMessage.mock.invocationCallOrder)).toBeLessThan(fetchCallOrder);
     expect(changes).toEqual([{
       previous: PowerState.Unknown,
       current: PowerState.On,
@@ -209,6 +209,46 @@ describe('AppleTV', () => {
       current: PowerState.Unknown,
       systemStatus: CompanionSystemStatus.Unknown,
     });
+  });
+
+  it('keeps a pushed status that arrives while the initial snapshot is in flight', async () => {
+    vi.spyOn(CompanionConnection.prototype, 'connect').mockResolvedValue();
+    vi.spyOn(CompanionConnection.prototype, 'sendMessage').mockImplementation(() => {});
+    let atv: AppleTV;
+    vi.spyOn(CompanionConnection.prototype, 'sendRequest')
+      .mockImplementation(async (identifier): Promise<OpackDict> => {
+        if (identifier === '_sessionStart') {
+          return new Map([['_c', new Map([['_sid', 7]])]]);
+        }
+        if (identifier === 'FetchAttentionState') {
+          (atv as any).handleCompanionEvent({
+            identifier: 'TVSystemStatus',
+            data: new Map([['_c', new Map([['state', CompanionSystemStatus.Asleep]])]]),
+          });
+          return new Map([['_c', new Map([['state', CompanionSystemStatus.Awake]])]]);
+        }
+        return new Map();
+      });
+    atv = new AppleTV({
+      name: 'Living Room',
+      address: '192.168.1.100',
+      port: 7000,
+      companionPort: 49152,
+      deviceId: 'AA:BB:CC:DD:EE:FF',
+      model: 'AppleTV6,2',
+    });
+
+    await atv.connectCompanion({
+      clientId: 'companion-client',
+      clientLTSK: Buffer.alloc(32, 1),
+      clientLTPK: Buffer.alloc(32, 2),
+      serverLTPK: Buffer.alloc(32, 3),
+      serverId: 'server',
+    });
+
+    expect(atv.powerState).toBe(PowerState.Off);
+    expect(atv.systemStatus).toBe(CompanionSystemStatus.Asleep);
+    await atv.close();
   });
 
   it('updates power state from Companion status events without duplicate changes', () => {
