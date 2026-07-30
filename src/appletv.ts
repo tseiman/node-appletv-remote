@@ -8,6 +8,7 @@ import { NowPlayingInfo } from './now-playing-info.js';
 import { SupportedCommand } from './supported-command.js';
 import { Message } from './message.js';
 import { CompanionConnection } from './companion/connection.js';
+import { CompanionAPI } from './companion/api.js';
 import { CompanionPairSetup } from './companion/pair-setup.js';
 import type { OpackDict } from './companion/opack.js';
 import type { HAPCredentials } from './auth/types.js';
@@ -71,6 +72,7 @@ export class AppleTV extends EventEmitter {
   readonly companionPort?: number;
   private connection?: AirPlayConnection;
   private companionConnection?: CompanionConnection;
+  private companionApi?: CompanionAPI;
 
   constructor(info: DiscoveredDeviceInfo) {
     super();
@@ -103,8 +105,16 @@ export class AppleTV extends EventEmitter {
   }
 
   async close(): Promise<void> {
+    if (this.companionApi) {
+      try {
+        await this.companionApi.stopRemoteSession();
+      } catch (error) {
+        this.emit('companionError', error);
+      }
+    }
     this.companionConnection?.close();
     this.companionConnection = undefined;
+    this.companionApi = undefined;
     this.connection?.close();
     this.connection = undefined;
   }
@@ -133,6 +143,13 @@ export class AppleTV extends EventEmitter {
     });
 
     await this.companionConnection.connect();
+    this.companionApi = new CompanionAPI(this.companionConnection);
+    await this.companionApi.initializeRemoteSession({
+      clientId: credentials.clientId,
+      deviceId: credentials.clientId,
+      model: 'Node.js',
+      name: 'node-appletv-remote',
+    });
     this.emit('companionConnect');
   }
 

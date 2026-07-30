@@ -5,6 +5,8 @@ import { NowPlayingInfo } from '../now-playing-info.js';
 import { SupportedCommand } from '../supported-command.js';
 import { Message } from '../message.js';
 import { MessageType } from '../mrp/messages.js';
+import { CompanionConnection } from '../companion/connection.js';
+import type { OpackDict } from '../companion/opack.js';
 
 describe('AppleTV', () => {
   it('creates from discovered device info', () => {
@@ -74,6 +76,43 @@ describe('AppleTV', () => {
     await expect(atv.wake()).rejects.toThrow('Not connected');
     await expect(atv.suspend()).rejects.toThrow('Not connected');
     await expect(atv.requestPlaybackQueue()).rejects.toThrow('Not connected');
+  });
+
+  it('initializes a remote session after Companion pair verification', async () => {
+    const connect = vi.spyOn(CompanionConnection.prototype, 'connect').mockResolvedValue();
+    const sendRequest = vi.spyOn(CompanionConnection.prototype, 'sendRequest')
+      .mockImplementation(async (identifier): Promise<OpackDict> => {
+        if (identifier === '_sessionStart') {
+          return new Map([['_c', new Map([['_sid', 7]])]]);
+        }
+        return new Map();
+      });
+    const atv = new AppleTV({
+      name: 'Living Room',
+      address: '192.168.1.100',
+      port: 7000,
+      companionPort: 49152,
+      deviceId: 'AA:BB:CC:DD:EE:FF',
+      model: 'AppleTV6,2',
+    });
+    const credentials = {
+      clientId: 'companion-client',
+      clientLTSK: Buffer.alloc(32, 1),
+      clientLTPK: Buffer.alloc(32, 2),
+      serverLTPK: Buffer.alloc(32, 3),
+      serverId: 'server',
+    };
+
+    await atv.connectCompanion(credentials);
+
+    expect(connect).toHaveBeenCalledOnce();
+    expect(sendRequest.mock.calls.map(([identifier]) => identifier)).toEqual([
+      '_systemInfo',
+      '_sessionStart',
+      'TVRCSessionStart',
+    ]);
+    await atv.close();
+    expect(sendRequest.mock.calls.at(-1)?.[0]).toBe('_sessionStop');
   });
 
   it('handleMRPMessage emits nowPlaying for SetState with nowPlayingInfo', () => {
