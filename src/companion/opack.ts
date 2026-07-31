@@ -245,7 +245,7 @@ function encodeDict(value: OpackDict, parts: Buffer[]): void {
 // --- Decoder ---
 
 export function opackDecode(buffer: Buffer): OpackValue {
-  const result = decodeValue(buffer, 0);
+  const result = decodeValue(buffer, 0, []);
   return result.value;
 }
 
@@ -254,7 +254,26 @@ interface DecodeResult {
   offset: number;
 }
 
-function decodeValue(buf: Buffer, offset: number): DecodeResult {
+function objectValuesEqual(left: OpackValue, right: OpackValue): boolean {
+  if (Buffer.isBuffer(left) && Buffer.isBuffer(right)) return left.equals(right);
+  return left === right;
+}
+
+function rememberObject(result: DecodeResult, objectTable: OpackValue[]): DecodeResult {
+  if (!objectTable.some((value) => objectValuesEqual(value, result.value))) {
+    objectTable.push(result.value);
+  }
+  return result;
+}
+
+function objectReference(objectTable: OpackValue[], index: number, offset: number): OpackValue {
+  if (index < 0 || index >= objectTable.length) {
+    throw new Error(`OPACK: invalid object reference ${index} at offset ${offset}`);
+  }
+  return objectTable[index];
+}
+
+function decodeValue(buf: Buffer, offset: number, objectTable: OpackValue[]): DecodeResult {
   if (offset >= buf.length) {
     throw new Error('OPACK: unexpected end of buffer');
   }
@@ -276,7 +295,19 @@ function decodeValue(buf: Buffer, offset: number): DecodeResult {
 
   // UUID (16 bytes)
   if (tag === TAG_UUID) {
-    return { value: Buffer.from(buf.subarray(offset + 1, offset + 17)), offset: offset + 17 };
+    return rememberObject(
+      { value: Buffer.from(buf.subarray(offset + 1, offset + 17)), offset: offset + 17 },
+      objectTable,
+    );
+  }
+
+  // Absolute time/date represented as an unsigned 64-bit value.
+  if (tag === 0x06) {
+    const value = buf.readBigUInt64LE(offset + 1);
+    return rememberObject(
+      { value: value <= Number.MAX_SAFE_INTEGER ? Number(value) : value, offset: offset + 9 },
+      objectTable,
+    );
   }
 
   // Small integers 0..39: tags 0x08..0x2F
@@ -286,114 +317,142 @@ function decodeValue(buf: Buffer, offset: number): DecodeResult {
 
   // Sized integers (unsigned LE)
   if (tag === TAG_INT8) {
-    return { value: buf.readUInt8(offset + 1), offset: offset + 2 };
+    return rememberObject({ value: buf.readUInt8(offset + 1), offset: offset + 2 }, objectTable);
   }
   if (tag === TAG_INT16) {
-    return { value: buf.readUInt16LE(offset + 1), offset: offset + 3 };
+    return rememberObject({ value: buf.readUInt16LE(offset + 1), offset: offset + 3 }, objectTable);
   }
   if (tag === TAG_INT32) {
-    return { value: buf.readUInt32LE(offset + 1), offset: offset + 5 };
+    return rememberObject({ value: buf.readUInt32LE(offset + 1), offset: offset + 5 }, objectTable);
   }
   if (tag === TAG_INT64) {
     const val = buf.readBigUInt64LE(offset + 1);
     if (val <= Number.MAX_SAFE_INTEGER) {
-      return { value: Number(val), offset: offset + 9 };
+      return rememberObject({ value: Number(val), offset: offset + 9 }, objectTable);
     }
-    return { value: val, offset: offset + 9 };
+    return rememberObject({ value: val, offset: offset + 9 }, objectTable);
   }
 
   // Floats
   if (tag === TAG_FLOAT32) {
-    return { value: buf.readFloatLE(offset + 1), offset: offset + 5 };
+    return rememberObject({ value: buf.readFloatLE(offset + 1), offset: offset + 5 }, objectTable);
   }
   if (tag === TAG_FLOAT64) {
-    return { value: buf.readDoubleLE(offset + 1), offset: offset + 9 };
+    return rememberObject({ value: buf.readDoubleLE(offset + 1), offset: offset + 9 }, objectTable);
   }
 
   // Strings: inline 0x40..0x60
   if (tag >= TAG_STRING_BASE && tag <= TAG_STRING_BASE + 0x20) {
     const len = tag - TAG_STRING_BASE;
     const str = buf.subarray(offset + 1, offset + 1 + len).toString('utf-8');
-    return { value: str, offset: offset + 1 + len };
+    return rememberObject({ value: str, offset: offset + 1 + len }, objectTable);
   }
   if (tag === TAG_STRING_LEN8) {
     const len = buf[offset + 1];
     const str = buf.subarray(offset + 2, offset + 2 + len).toString('utf-8');
-    return { value: str, offset: offset + 2 + len };
+    return rememberObject({ value: str, offset: offset + 2 + len }, objectTable);
   }
   if (tag === TAG_STRING_LEN16) {
     const len = buf.readUInt16LE(offset + 1);
     const str = buf.subarray(offset + 3, offset + 3 + len).toString('utf-8');
-    return { value: str, offset: offset + 3 + len };
+    return rememberObject({ value: str, offset: offset + 3 + len }, objectTable);
   }
   if (tag === TAG_STRING_LEN24) {
     const len = buf.readUIntLE(offset + 1, 3);
     const str = buf.subarray(offset + 4, offset + 4 + len).toString('utf-8');
-    return { value: str, offset: offset + 4 + len };
+    return rememberObject({ value: str, offset: offset + 4 + len }, objectTable);
   }
   if (tag === TAG_STRING_LEN32) {
     const len = buf.readUInt32LE(offset + 1);
     const str = buf.subarray(offset + 5, offset + 5 + len).toString('utf-8');
-    return { value: str, offset: offset + 5 + len };
+    return rememberObject({ value: str, offset: offset + 5 + len }, objectTable);
   }
 
   // Data/bytes: inline 0x70..0x90
   if (tag >= TAG_DATA_BASE && tag <= TAG_DATA_BASE + 0x20) {
     const len = tag - TAG_DATA_BASE;
     const data = Buffer.from(buf.subarray(offset + 1, offset + 1 + len));
-    return { value: data, offset: offset + 1 + len };
+    return rememberObject({ value: data, offset: offset + 1 + len }, objectTable);
   }
   if (tag === TAG_DATA_LEN8) {
     const len = buf[offset + 1];
     const data = Buffer.from(buf.subarray(offset + 2, offset + 2 + len));
-    return { value: data, offset: offset + 2 + len };
+    return rememberObject({ value: data, offset: offset + 2 + len }, objectTable);
   }
   if (tag === TAG_DATA_LEN16) {
     const len = buf.readUInt16LE(offset + 1);
     const data = Buffer.from(buf.subarray(offset + 3, offset + 3 + len));
-    return { value: data, offset: offset + 3 + len };
+    return rememberObject({ value: data, offset: offset + 3 + len }, objectTable);
   }
   if (tag === TAG_DATA_LEN32) {
     const len = buf.readUInt32LE(offset + 1);
     const data = Buffer.from(buf.subarray(offset + 5, offset + 5 + len));
-    return { value: data, offset: offset + 5 + len };
+    return rememberObject({ value: data, offset: offset + 5 + len }, objectTable);
+  }
+
+  // Object references: 0xA0..0xC0 inline index, 0xC1..0xC4 sized index.
+  if (tag >= 0xa0 && tag <= 0xc0) {
+    return { value: objectReference(objectTable, tag - 0xa0, offset), offset: offset + 1 };
+  }
+  if (tag >= 0xc1 && tag <= 0xc4) {
+    const indexBytes = 1 << (tag - 0xc1);
+    const rawIndex = indexBytes === 8
+      ? buf.readBigUInt64LE(offset + 1)
+      : BigInt(buf.readUIntLE(offset + 1, indexBytes));
+    if (rawIndex > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error(`OPACK: object reference is too large at offset ${offset}`);
+    }
+    const index = Number(rawIndex);
+    return {
+      value: objectReference(objectTable, index, offset),
+      offset: offset + 1 + indexBytes,
+    };
   }
 
   // Arrays: 0xD0..0xDE inline count, 0xDF = terminated
   if (tag >= TAG_ARRAY_BASE && tag < TAG_ARRAY_BASE + TAG_ARRAY_OVERFLOW) {
     const count = tag - TAG_ARRAY_BASE;
-    return decodeArrayN(buf, offset + 1, count);
+    return decodeArrayN(buf, offset + 1, count, objectTable);
   }
   if (tag === TAG_ARRAY_BASE + TAG_ARRAY_OVERFLOW) {
-    return decodeArrayTerminated(buf, offset + 1);
+    return decodeArrayTerminated(buf, offset + 1, objectTable);
   }
 
   // Dicts: 0xE0..0xEE inline count, 0xEF = terminated
   if (tag >= TAG_DICT_BASE && tag < TAG_DICT_BASE + TAG_DICT_OVERFLOW) {
     const count = tag - TAG_DICT_BASE;
-    return decodeDictN(buf, offset + 1, count);
+    return decodeDictN(buf, offset + 1, count, objectTable);
   }
   if (tag === TAG_DICT_BASE + TAG_DICT_OVERFLOW) {
-    return decodeDictTerminated(buf, offset + 1);
+    return decodeDictTerminated(buf, offset + 1, objectTable);
   }
 
   throw new Error(`OPACK: unknown tag 0x${tag.toString(16)} at offset ${offset}`);
 }
 
-function decodeArrayN(buf: Buffer, offset: number, count: number): DecodeResult {
+function decodeArrayN(
+  buf: Buffer,
+  offset: number,
+  count: number,
+  objectTable: OpackValue[],
+): DecodeResult {
   const arr: OpackValue[] = [];
   for (let i = 0; i < count; i++) {
-    const item = decodeValue(buf, offset);
+    const item = decodeValue(buf, offset, objectTable);
     arr.push(item.value);
     offset = item.offset;
   }
   return { value: arr, offset };
 }
 
-function decodeArrayTerminated(buf: Buffer, offset: number): DecodeResult {
+function decodeArrayTerminated(
+  buf: Buffer,
+  offset: number,
+  objectTable: OpackValue[],
+): DecodeResult {
   const arr: OpackValue[] = [];
   while (offset < buf.length && buf[offset] !== TAG_TERMINATOR) {
-    const item = decodeValue(buf, offset);
+    const item = decodeValue(buf, offset, objectTable);
     arr.push(item.value);
     offset = item.offset;
   }
@@ -403,24 +462,33 @@ function decodeArrayTerminated(buf: Buffer, offset: number): DecodeResult {
   return { value: arr, offset };
 }
 
-function decodeDictN(buf: Buffer, offset: number, count: number): DecodeResult {
+function decodeDictN(
+  buf: Buffer,
+  offset: number,
+  count: number,
+  objectTable: OpackValue[],
+): DecodeResult {
   const dict: OpackDict = new Map();
   for (let i = 0; i < count; i++) {
-    const key = decodeValue(buf, offset);
+    const key = decodeValue(buf, offset, objectTable);
     offset = key.offset;
-    const val = decodeValue(buf, offset);
+    const val = decodeValue(buf, offset, objectTable);
     offset = val.offset;
     dict.set(key.value, val.value);
   }
   return { value: dict, offset };
 }
 
-function decodeDictTerminated(buf: Buffer, offset: number): DecodeResult {
+function decodeDictTerminated(
+  buf: Buffer,
+  offset: number,
+  objectTable: OpackValue[],
+): DecodeResult {
   const dict: OpackDict = new Map();
   while (offset < buf.length && buf[offset] !== TAG_TERMINATOR) {
-    const key = decodeValue(buf, offset);
+    const key = decodeValue(buf, offset, objectTable);
     offset = key.offset;
-    const val = decodeValue(buf, offset);
+    const val = decodeValue(buf, offset, objectTable);
     offset = val.offset;
     dict.set(key.value, val.value);
   }

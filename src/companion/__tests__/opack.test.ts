@@ -195,6 +195,39 @@ describe('OPACK', () => {
     });
   });
 
+  describe('object references', () => {
+    it('decodes an inline object reference used by tvOS responses', () => {
+      const objects = Array.from({ length: 25 }, (_, index) => `v${index.toString().padStart(2, '0')}`);
+      const encodedObjects = objects.map((value) => Buffer.concat([
+        Buffer.from([0x40 + Buffer.byteLength(value)]),
+        Buffer.from(value),
+      ]));
+      const payload = Buffer.concat([
+        Buffer.from([0xdf]),
+        ...encodedObjects,
+        Buffer.from([0xb8, 0x03]), // reference to object-table index 24, then terminator
+      ]);
+
+      expect(opackDecode(payload)).toEqual([...objects, objects[24]]);
+    });
+
+    it.each([
+      Buffer.from([0xc1, 0x00]),
+      Buffer.from([0xc2, 0x00, 0x00]),
+      Buffer.from([0xc3, 0x00, 0x00, 0x00, 0x00]),
+      Buffer.from([0xc4, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+    ])('decodes sized object reference %s', (reference) => {
+      const payload = Buffer.concat([
+        Buffer.from([0xdf, 0x43]),
+        Buffer.from('one'),
+        reference,
+        Buffer.from([0x03]),
+      ]);
+
+      expect(opackDecode(payload)).toEqual(['one', 'one']);
+    });
+  });
+
   describe('roundtrip', () => {
     it('roundtrips complex message', () => {
       const msg: OpackDict = new Map<string, unknown>([
