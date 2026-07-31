@@ -29,6 +29,12 @@ const X25519_SPKI_PREFIX = Buffer.from('302a300506032b656e032100', 'hex');
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 const ED25519_PKCS8_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
 
+function companionDebug(message: string): void {
+  if (process.env.ATV_COMPANION_DEBUG === '1') {
+    console.error(`[companion ${new Date().toISOString()}] ${message}`);
+  }
+}
+
 function x25519PublicKeyFromRaw(raw: Buffer): KeyObject {
   return createPublicKey({
     key: Buffer.concat([X25519_SPKI_PREFIX, raw]),
@@ -79,12 +85,19 @@ export class CompanionConnection extends EventEmitter {
   private openSocket(): Promise<void> {
     return new Promise((resolve, reject) => {
       this.socket = new Socket();
-      this.socket.connect(this.port, this.host, () => resolve());
+      this.socket.connect(this.port, this.host, () => {
+        companionDebug(`socket connected ${this.host}:${this.port}`);
+        resolve();
+      });
       this.socket.on('error', (err) => {
+        companionDebug(`socket error ${err.name}: ${err.message}`);
         reject(err);
         this.emit('error', err);
       });
-      this.socket.on('close', () => this.emit('close'));
+      this.socket.on('close', () => {
+        companionDebug('socket closed');
+        this.emit('close');
+      });
       this.socket.on('data', (data: Buffer) => this.onData(data));
     });
   }
@@ -105,7 +118,9 @@ export class CompanionConnection extends EventEmitter {
         opackPayload.set(k, v);
       }
     }
-    this.writeRaw(encodeFrame(frameType, opackEncode(opackPayload)));
+    const frame = encodeFrame(frameType, opackEncode(opackPayload));
+    companionDebug(`tx pairing frame type=${frameType} bytes=${frame.length}`);
+    this.writeRaw(frame);
   }
 
   /**
@@ -113,6 +128,7 @@ export class CompanionConnection extends EventEmitter {
    */
   private async receivePairingData(frameType: FrameType): Promise<Buffer> {
     const frame = await this.waitForFrame(frameType);
+    companionDebug(`rx pairing frame type=${frame.type} payloadBytes=${frame.payload.length}`);
     const decoded = opackDecode(frame.payload);
     if (!(decoded instanceof Map)) {
       throw new Error('Companion PV: expected OPACK dict response');
@@ -125,6 +141,7 @@ export class CompanionConnection extends EventEmitter {
   }
 
   private async pairVerify(): Promise<void> {
+    companionDebug('pair-verify start');
     // Generate ephemeral X25519 keypair
     const { publicKey, privateKey } = generateKeyPairSync('x25519');
     const ephemeralPubRaw = Buffer.from(
@@ -214,6 +231,7 @@ export class CompanionConnection extends EventEmitter {
       [TlvTag.EncryptedData]: encryptedData,
     });
     this.sendPairingData(FrameType.PV_Next, m3);
+    companionDebug('pair-verify M3 sent');
 
     // M4: Wait for acknowledgement
     const m4Data = await this.receivePairingData(FrameType.PV_Next);
@@ -238,6 +256,7 @@ export class CompanionConnection extends EventEmitter {
     );
 
     this.session = new CompanionSession(outputKey, inputKey);
+    companionDebug('pair-verify complete; encrypted session enabled');
   }
 
   /**
@@ -258,11 +277,15 @@ export class CompanionConnection extends EventEmitter {
 
     const payload = opackEncode(content);
     const encrypted = this.session.encrypt(FrameType.E_OPACK, payload);
+    companionDebug(
+      `tx encrypted request id=${identifier} xid=${tid} plaintextBytes=${payload.length} encryptedPayloadBytes=${encrypted.readUIntBE(1, 3)}`,
+    );
     this.writeRaw(encrypted);
 
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingRequests.delete(tid);
+        companionDebug(`request timeout id=${identifier} xid=${tid}`);
         reject(new Error(`Companion request timeout: ${identifier}`));
       }, timeoutMs);
 
@@ -290,6 +313,9 @@ export class CompanionConnection extends EventEmitter {
     content.set('_i', identifier);
     const payload = opackEncode(content);
     const encrypted = this.session.encrypt(FrameType.E_OPACK, payload);
+    companionDebug(
+      `tx encrypted message id=${identifier} plaintextBytes=${payload.length} encryptedPayloadBytes=${encrypted.readUIntBE(1, 3)}`,
+    );
     this.writeRaw(encrypted);
   }
 
@@ -308,6 +334,7 @@ export class CompanionConnection extends EventEmitter {
   }
 
   private onData(data: Buffer): void {
+    companionDebug(`socket rx bytes=${data.length} phase=${this.session ? 'encrypted' : 'pair-verify'}`);
     this.buffer = Buffer.concat([this.buffer, data]);
 
     if (!this.session) {
@@ -353,6 +380,7 @@ export class CompanionConnection extends EventEmitter {
     this.buffer = remainder;
 
     for (const frame of frames) {
+      companionDebug(`parsed pairing frame type=${frame.type} payloadBytes=${frame.payload.length}`);
       const idx = this.pendingFrameResolvers.findIndex((r) => r.type === frame.type);
       if (idx >= 0) {
         const resolver = this.pendingFrameResolvers.splice(idx, 1)[0];
@@ -376,12 +404,23 @@ export class CompanionConnection extends EventEmitter {
       const header = this.buffer.subarray(0, 4);
       const encryptedPayload = this.buffer.subarray(4, totalLen);
       this.buffer = Buffer.from(this.buffer.subarray(totalLen));
+      companionDebug(
+        `rx encrypted frame type=${header[0]} encryptedPayloadBytes=${encryptedPayloadLen}`,
+      );
 
       try {
         const plaintext = this.session!.decrypt(header, encryptedPayload);
         const decoded = opackDecode(plaintext);
+        if (decoded instanceof Map) {
+          companionDebug(
+            `rx decoded message id=${String(decoded.get('_i'))} type=${String(decoded.get('_t'))} xid=${String(decoded.get('_x'))} plaintextBytes=${plaintext.length}`,
+          );
+        } else {
+          companionDebug(`rx decoded non-dictionary plaintextBytes=${plaintext.length}`);
+        }
         this.handleMessage(decoded);
       } catch (e) {
+        companionDebug(`rx decrypt/decode error: ${e instanceof Error ? e.message : String(e)}`);
         this.emit('error', new Error(`Companion decrypt error: ${e}`));
       }
     }
