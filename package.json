@@ -5,6 +5,9 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "scripts": {
     "build": "tsc && rm -rf dist/proto && cp -r src/proto dist/proto",
     "prepublishOnly": "npm run build",

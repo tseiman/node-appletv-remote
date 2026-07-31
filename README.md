@@ -333,6 +333,8 @@ src/
 
 ## Development
 
+Development requires Node.js `20.19+` or `22.12+`. Node.js 22 LTS is recommended. With `nvm`, run `nvm install` and `nvm use` in the repository before installing dependencies.
+
 ```bash
 # Install dependencies
 npm install
@@ -346,5 +348,3 @@ npm test
 # Run tests in watch mode
 npm run test:watch
 ```
-
-Requires Node.js 18+ (ES2022 target, ESM modules).
