@@ -10,6 +10,7 @@
   },
   "scripts": {
     "build": "tsc && rm -rf dist/proto && cp -r src/proto dist/proto",
+    "prepare": "npm run build",
     "prepublishOnly": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest"
