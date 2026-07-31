@@ -13,6 +13,7 @@ import {
   verify as cryptoVerify,
   createPublicKey,
   createPrivateKey,
+  randomInt,
   type KeyObject,
 } from 'node:crypto';
 import { TlvTag, tlvEncode, tlvDecode } from '../util/tlv.js';
@@ -33,6 +34,10 @@ function companionDebug(message: string): void {
   if (process.env.ATV_COMPANION_DEBUG === '1') {
     console.error(`[companion ${new Date().toISOString()}] ${message}`);
   }
+}
+
+export function createInitialTransferId(): number {
+  return randomInt(1, 0x1_0000);
 }
 
 function x25519PublicKeyFromRaw(raw: Buffer): KeyObject {
@@ -63,7 +68,7 @@ export class CompanionConnection extends EventEmitter {
   private socket: Socket | undefined;
   private session: CompanionSession | undefined;
   private buffer: Buffer = Buffer.alloc(0);
-  private transferId = 0;
+  private transferId = createInitialTransferId();
   private pendingRequests = new Map<number, {
     resolve: (value: OpackDict) => void;
     reject: (error: Error) => void;
