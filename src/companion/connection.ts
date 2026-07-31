@@ -364,12 +364,12 @@ export class CompanionConnection extends EventEmitter {
   // --- Post-encryption frame handling ---
 
   private processEncryptedFrames(): void {
-    // Encrypted frames: 4-byte header + ciphertext + 16-byte tag
-    // The header contains the plaintext length, so total = 4 + plaintextLen + 16
+    // Encrypted frames: 4-byte header + ciphertext + 16-byte tag. Companion
+    // includes the authentication tag in the header's payload length.
     while (this.buffer.length >= 4) {
-      const plaintextLen =
+      const encryptedPayloadLen =
         (this.buffer[1] << 16) | (this.buffer[2] << 8) | this.buffer[3];
-      const totalLen = 4 + plaintextLen + 16;
+      const totalLen = 4 + encryptedPayloadLen;
 
       if (this.buffer.length < totalLen) break;
 
